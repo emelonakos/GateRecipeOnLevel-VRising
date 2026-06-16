@@ -2,6 +2,7 @@ using System;
 using LevelRecipeGate.Config;
 using ProjectM;
 using ProjectM.Network;
+using ProjectM.Shared;
 using Stunlock.Core;
 using Unity.Collections;
 using Unity.Entities;
@@ -28,6 +29,18 @@ namespace LevelRecipeGate.Services
 				"forge repair",
 				$"forge={forgeEntity.Index}:{forgeEntity.Version}, item={itemGuidHash}",
 				forgeEntity);
+		}
+
+		internal static void TryBlockWeaponEquipEvent(Entity eventEntity, Entity itemEntity, PrefabGUID itemGuid)
+		{
+			if (!TryGetWeaponRepairRecipe(itemEntity, out PrefabGUID repairRecipe))
+				return;
+
+			TryBlockEvent(
+				eventEntity,
+				repairRecipe,
+				"equip weapon",
+				$"item={itemGuid.GuidHash}");
 		}
 
 		private static void TryBlockEvent(Entity eventEntity, PrefabGUID recipeGuid, string action, string context, Entity forgeEntity = default(Entity))
@@ -104,6 +117,23 @@ namespace LevelRecipeGate.Services
 				Plugin.Logger.LogWarning($"[{Plugin.Name}] Failed reading highest player gear level: {ex.Message}");
 				return -1;
 			}
+		}
+
+		private static bool TryGetWeaponRepairRecipe(Entity itemEntity, out PrefabGUID repairRecipe)
+		{
+			repairRecipe = default(PrefabGUID);
+
+			if (!itemEntity.Exists() || !itemEntity.Has<EquippableData>())
+				return false;
+
+			if (itemEntity.Read<EquippableData>().EquipmentType != EquipmentType.Weapon)
+				return false;
+
+			if (!itemEntity.Has<Durability>())
+				return false;
+
+			repairRecipe = itemEntity.Read<Durability>().RepairRecipe;
+			return repairRecipe.GuidHash != 0;
 		}
 
 		private static void TryQueueForgeRemoveItem(FromCharacter fromCharacter, Entity forgeEntity)

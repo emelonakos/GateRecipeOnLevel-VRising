@@ -35,6 +35,8 @@ public override void Load()
 	PlayerLevelService.Load();
 	Harmony = new Harmony(Id);
 	Harmony.PatchAll(typeof(CraftingPatch));
+	Harmony.PatchAll(typeof(EquipItemPatch));
+	Harmony.PatchAll(typeof(EquipItemFromInventoryPatch));
 	Harmony.PatchAll(typeof(ForgeRepairPatch));
 
 #if !NoVCF

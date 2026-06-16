@@ -1,4 +1,6 @@
 using System;
+using ProjectM;
+using ProjectM.Network;
 using Stunlock.Core;
 using Unity.Collections;
 using Unity.Entities;
@@ -10,6 +12,7 @@ namespace LevelRecipeGate.Services
 		private static EntityManager _entityManager;
 		private static World _world;
 		private static EndSimulationEntityCommandBufferSystem _endSimulationEntityCommandBufferSystem;
+		private static Entity _networkIdLookupEntity;
 
 		internal static EntityManager EntityManager
 		{
@@ -42,10 +45,25 @@ namespace LevelRecipeGate.Services
 			{
 				_world = world;
 				_endSimulationEntityCommandBufferSystem = world.GetExistingSystemManaged<EndSimulationEntityCommandBufferSystem>();
+				_networkIdLookupEntity = FindNetworkIdLookupEntity(entityManager);
 			}
 
 			_entityManager = entityManager;
 			HasEntityManager = true;
+		}
+
+		internal static bool TryGetEntityFromNetworkId(NetworkId networkId, out Entity entity)
+		{
+			entity = Entity.Null;
+
+			if (!_networkIdLookupEntity.Exists() || !_networkIdLookupEntity.Has<NetworkIdSystem.Singleton>())
+				_networkIdLookupEntity = FindNetworkIdLookupEntity(EntityManager);
+
+			if (!_networkIdLookupEntity.Exists() || !_networkIdLookupEntity.Has<NetworkIdSystem.Singleton>())
+				return false;
+
+			NetworkIdSystem.Singleton singleton = _networkIdLookupEntity.Read<NetworkIdSystem.Singleton>();
+			return singleton.GetNetworkIdLookupRW().TryGetValue(networkId, out entity);
 		}
 
 		internal static void Clear()
@@ -53,7 +71,28 @@ namespace LevelRecipeGate.Services
 			_entityManager = default(EntityManager);
 			_world = null;
 			_endSimulationEntityCommandBufferSystem = null;
+			_networkIdLookupEntity = Entity.Null;
 			HasEntityManager = false;
+		}
+
+		private static Entity FindNetworkIdLookupEntity(EntityManager entityManager)
+		{
+			EntityQuery query = entityManager.CreateEntityQuery(new EntityQueryDesc
+			{
+				All = new[] { ComponentType.ReadOnly<NetworkIdSystem.Singleton>() },
+				Options = EntityQueryOptions.IncludeSystems
+			});
+
+			NativeArray<Entity> entities = query.ToEntityArray(Allocator.Temp);
+			try
+			{
+				return entities.Length > 0 ? entities[0] : Entity.Null;
+			}
+			finally
+			{
+				entities.Dispose();
+				query.Dispose();
+			}
 		}
 	}
 

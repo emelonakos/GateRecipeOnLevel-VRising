@@ -30,10 +30,12 @@ public override void Load()
 
 	ConfigStore.EnsureConfigsExist();
 	ConfigStore.LoadLevelRecipeBlocksFromDisk();
+	ConfigStore.InitializeFileWatcher();
 
-	PlayerLevelService.Load();   
+	PlayerLevelService.Load();
 	Harmony = new Harmony(Id);
 	Harmony.PatchAll(typeof(CraftingPatch));
+	Harmony.PatchAll(typeof(ForgeRepairPatch));
 
 #if !NoVCF
 	try
@@ -47,7 +49,7 @@ public override void Load()
 #endif
 
 	Logger.LogInfo($"[{Name}] {Version} loaded.");
-	Logger.LogInfo($"[{Name}] Level-gated recipes: {ConfigStore.RecipeMinLevelByGuid.Count} | Enabled={ConfigStore.LevelRecipeBlocksEnabled}");
+	Logger.LogInfo($"[{Name}] Level-gated recipes: {ConfigStore.GetRecipeLevelGatesSnapshot().Count} | Enabled={ConfigStore.LevelRecipeBlocksEnabled}");
 	Logger.LogInfo($"[{Name}] Config: {Path.GetFullPath(ConfigStore.LevelRecipeCfgFile)}");
 }
 
@@ -56,6 +58,7 @@ public override void Load()
 			try
 			{
 				Harmony?.UnpatchSelf();
+				ConfigStore.DisposeFileWatcher();
 			}
 			catch (Exception ex)
 			{

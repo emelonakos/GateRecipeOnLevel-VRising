@@ -16,21 +16,23 @@ namespace LevelRecipeGate.Commands
 		public static void Reload(ICommandContext ctx)
 		{
 			ConfigStore.LoadLevelRecipeBlocksFromDisk();
-			ctx.Reply($"[LevelRecipeGate] Reloaded {ConfigStore.RecipeMinLevelByGuid.Count} level-gated recipe(s). Enabled={ConfigStore.LevelRecipeBlocksEnabled}.");
+			ctx.Reply($"[LevelRecipeGate] Reloaded {ConfigStore.GetRecipeLevelGatesSnapshot().Count} level-gated recipe(s). Enabled={ConfigStore.LevelRecipeBlocksEnabled}.");
 		}
 
 		[Command("list", null, null, "List level-gated recipe GUIDs", null, true)]
 		public static void List(ICommandContext ctx)
 		{
-			if (ConfigStore.RecipeMinLevelByGuid.Count == 0)
+			var recipeGates = ConfigStore.GetRecipeLevelGatesSnapshot();
+
+			if (recipeGates.Count == 0)
 			{
 				ctx.Reply("[LevelRecipeGate] No level-gated recipes configured.");
 				return;
 			}
 
-			foreach (var group in ConfigStore.RecipeMinLevelByGuid.GroupBy(kvp => kvp.Value).OrderBy(g => g.Key))
+			foreach (var group in recipeGates.GroupBy(kvp => kvp.Value).OrderBy(g => g.Key))
 			{
-				int[] values = group.Select(kvp => kvp.Key).OrderBy(x => x).ToArray();
+				string[] values = group.Select(kvp => ConfigStore.FormatRecipePrefab(kvp.Key)).OrderBy(x => x).ToArray();
 				ctx.Reply($"[LevelRecipeGate] Level {group.Key}: {values.Length} recipe(s).");
 
 				for (int i = 0; i < values.Length; i += 10)
@@ -38,8 +40,8 @@ namespace LevelRecipeGate.Commands
 			}
 		}
 
-		[Command("add", null, null, "Add or update a level gate: .levelrecipegate add <level> <recipeGuid>", null, true)]
-		public static void Add(ICommandContext ctx, int minLevel, int recipeGuid)
+		[Command("add", null, null, "Add or update a level gate: .levelrecipegate add <level> <recipePrefab>", null, true)]
+		public static void Add(ICommandContext ctx, int minLevel, string recipePrefab)
 		{
 			if (minLevel < 0 || minLevel > 255)
 			{
@@ -47,17 +49,29 @@ namespace LevelRecipeGate.Commands
 				return;
 			}
 
+			if (!ConfigStore.TryResolveRecipePrefab(recipePrefab, out int recipeGuid))
+			{
+				ctx.Reply($"[LevelRecipeGate] Unknown recipe prefab: {recipePrefab}");
+				return;
+			}
+
 			ConfigStore.SetRecipeLevelGate(recipeGuid, minLevel);
-			ctx.Reply($"[LevelRecipeGate] Recipe {recipeGuid} now requires gear level {minLevel}.");
+			ctx.Reply($"[LevelRecipeGate] Recipe {ConfigStore.FormatRecipePrefab(recipeGuid)} now requires gear level {minLevel}.");
 		}
 
-		[Command("remove", null, null, "Remove a recipe level gate: .levelrecipegate remove <recipeGuid>", null, true)]
-		public static void Remove(ICommandContext ctx, int recipeGuid)
+		[Command("remove", null, null, "Remove a recipe level gate: .levelrecipegate remove <recipePrefab>", null, true)]
+		public static void Remove(ICommandContext ctx, string recipePrefab)
 		{
+			if (!ConfigStore.TryResolveRecipePrefab(recipePrefab, out int recipeGuid))
+			{
+				ctx.Reply($"[LevelRecipeGate] Unknown recipe prefab: {recipePrefab}");
+				return;
+			}
+
 			if (ConfigStore.RemoveRecipeLevelGate(recipeGuid))
-				ctx.Reply($"[LevelRecipeGate] Removed level gate for recipe {recipeGuid}.");
+				ctx.Reply($"[LevelRecipeGate] Removed level gate for recipe {ConfigStore.FormatRecipePrefab(recipeGuid)}.");
 			else
-				ctx.Reply($"[LevelRecipeGate] Recipe {recipeGuid} was not level-gated.");
+				ctx.Reply($"[LevelRecipeGate] Recipe {ConfigStore.FormatRecipePrefab(recipeGuid)} was not level-gated.");
 		}
 	}
 #else

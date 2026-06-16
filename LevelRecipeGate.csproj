@@ -13,15 +13,24 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <VRisingServerDir Condition="'$(VRisingServerDir)' == ''">$(MSBuildThisFileDirectory)..\VRisingServer</VRisingServerDir>
+    <VRisingServerDir Condition="'$(VRisingServerDir)' == '' and Exists('$(MSBuildThisFileDirectory)..\VRisingServer\BepInEx')">$(MSBuildThisFileDirectory)..\VRisingServer</VRisingServerDir>
+    <VRisingServerDir Condition="'$(VRisingServerDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\VRisingDedicatedServer</VRisingServerDir>
     <BepInExDir Condition="'$(BepInExDir)' == ''">$(VRisingServerDir)\BepInEx</BepInExDir>
     <InteropDir Condition="'$(InteropDir)' == ''">$(BepInExDir)\interop</InteropDir>
     <PluginsDir Condition="'$(PluginsDir)' == ''">$(BepInExDir)\plugins</PluginsDir>
+    <BloodpebblePluginsDir Condition="'$(BloodpebblePluginsDir)' == ''">$(BepInExDir)\BloodpebblePlugins</BloodpebblePluginsDir>
   </PropertyGroup>
 
   <PropertyGroup>
     <NoVCF Condition="'$(NoVCF)' == ''">false</NoVCF>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>reloadable</_Parameter1>
+      <_Parameter2>true</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="BepInEx.Core" HintPath="$(BepInExDir)\core\BepInEx.Core.dll" Private="false" />
@@ -34,11 +43,23 @@
     <Reference Include="ProjectM" HintPath="$(InteropDir)\ProjectM.dll" Private="false" />
     <Reference Include="ProjectM.Shared" HintPath="$(InteropDir)\ProjectM.Shared.dll" Private="false" />
     <Reference Include="ProjectM.CodeGeneration" HintPath="$(InteropDir)\ProjectM.CodeGeneration.dll" Private="false" />
+    <Reference Include="ProjectM.Gameplay.Systems" HintPath="$(InteropDir)\ProjectM.Gameplay.Systems.dll" Private="false" />
     <Reference Include="Stunlock.Core" HintPath="$(InteropDir)\Stunlock.Core.dll" Private="false" />
     <Reference Include="Unity.Collections" HintPath="$(InteropDir)\Unity.Collections.dll" Private="false" />
     <Reference Include="Unity.Entities" HintPath="$(InteropDir)\Unity.Entities.dll" Private="false" />
+    <Reference Include="Unity.Mathematics" HintPath="$(InteropDir)\Unity.Mathematics.dll" Private="false" />
+    <Reference Include="Unity.Transforms" HintPath="$(InteropDir)\Unity.Transforms.dll" Private="false" />
     <Reference Include="UnityEngine.CoreModule" HintPath="$(InteropDir)\UnityEngine.CoreModule.dll" Private="false" />
 
     <Reference Include="VampireCommandFramework" HintPath="$(PluginsDir)\VampireCommandFramework.dll" Private="false" Condition="'$(NoVCF)' != 'true'" />
   </ItemGroup>
+
+  <Target Name="CopyToBloodpebblePlugins" AfterTargets="Build" Condition="'$(CopyToBloodpebblePlugins)' != 'false'">
+    <MakeDir Directories="$(BloodpebblePluginsDir)" />
+    <ItemGroup>
+      <BloodpebbleOutput Include="$(TargetDir)$(AssemblyName).dll" />
+      <BloodpebbleOutput Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BloodpebbleOutput)" DestinationFolder="$(BloodpebblePluginsDir)" />
+  </Target>
 </Project>

@@ -107,14 +107,14 @@ Example:
     {
       "min_level": 33,
       "recipes": [
-        305819079,
-        -1520452495
+        "Recipe_Weapon_Axe_T05_Iron",
+        "Recipe_Weapon_Claws_T05_Iron"
       ]
     },
     {
       "min_level": 50,
       "recipes": [
-        690858507
+        "Recipe_Weapon_Axe_T06_Iron_Reinforced"
       ]
     }
   ]
@@ -128,18 +128,25 @@ Example:
 ```txt
 .levelrecipegate reload
 .levelrecipegate list
-.levelrecipegate add <level> <recipeGuid>
-.levelrecipegate remove <recipeGuid>
+.levelrecipegate add <level> <recipePrefab>
+.levelrecipegate remove <recipePrefab>
 ```
 
 Examples:
 
 ```txt
-.levelrecipegate add 74 -1671420432
-.levelrecipegate remove -1671420432
+.levelrecipegate add 74 Recipe_Weapon_Sword_T08_Sanguine
+.levelrecipegate remove Recipe_Weapon_Sword_T08_Sanguine
 .levelrecipegate list
 .levelrecipegate reload
 ```
+
+---
+
+### Live Reload
+
+Changes to `level_recipe_blocks.json` are watched and reloaded automatically.
+The `.levelrecipegate reload` command is still available for manual reloads.
 
 ---
 

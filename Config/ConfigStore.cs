@@ -3,12 +3,19 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 
 namespace LevelRecipeGate.Config
 {
 	internal static class ConfigStore
 	{
+		private const int ReloadDebounceMilliseconds = 500;
 		private static string ConfigDir => Path.Combine("BepInEx", "config", "LevelRecipeGate");
+		private static readonly object SyncRoot = new object();
+		private static FileSystemWatcher _fileWatcher;
+		private static Timer _debounceTimer;
+		private static bool _disposed;
+
 		public static string LevelRecipeCfgFile => Path.Combine(ConfigDir, "level_recipe_blocks.json");
 
 		internal static readonly Dictionary<int, int> RecipeMinLevelByGuid = new Dictionary<int, int>();
@@ -25,7 +32,7 @@ namespace LevelRecipeGate.Config
 		private sealed class LevelRecipeBlockEntry
 		{
 			public int min_level { get; set; }
-			public List<int> recipes { get; set; } = new List<int>();
+			public List<object> recipes { get; set; } = new List<object>();
 		}
 
 		internal static void EnsureConfigsExist()
@@ -43,12 +50,20 @@ namespace LevelRecipeGate.Config
 						new LevelRecipeBlockEntry
 						{
 							min_level = 33,
-							recipes = new List<int> { 305819079, -1520452495 }
+							recipes = new List<object>
+							{
+								"Recipe_Weapon_Axe_T05_Iron",
+								"Recipe_Weapon_Claws_T05_Iron"
+							}
 						},
 						new LevelRecipeBlockEntry
 						{
 							min_level = 50,
-							recipes = new List<int> { 690858507, -1690827442 }
+							recipes = new List<object>
+							{
+								"Recipe_Weapon_Axe_T06_Iron_Reinforced",
+								"Recipe_Weapon_Claws_T06_Iron_Reinforced"
+							}
 						}
 					}
 				};
@@ -57,12 +72,53 @@ namespace LevelRecipeGate.Config
 			}
 		}
 
+		internal static void InitializeFileWatcher()
+		{
+			Directory.CreateDirectory(ConfigDir);
+
+			if (_fileWatcher != null)
+			{
+				_fileWatcher.Changed -= OnConfigFileChanged;
+				_fileWatcher.Created -= OnConfigFileChanged;
+				_fileWatcher.Renamed -= OnConfigFileChanged;
+				_fileWatcher.Dispose();
+			}
+
+			_disposed = false;
+			_fileWatcher = new FileSystemWatcher
+			{
+				Path = ConfigDir,
+				Filter = Path.GetFileName(LevelRecipeCfgFile),
+				NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+				EnableRaisingEvents = true
+			};
+
+			_fileWatcher.Changed += OnConfigFileChanged;
+			_fileWatcher.Created += OnConfigFileChanged;
+			_fileWatcher.Renamed += OnConfigFileChanged;
+		}
+
+		internal static void DisposeFileWatcher()
+		{
+			lock (SyncRoot)
+			{
+				_disposed = true;
+				_debounceTimer?.Dispose();
+				_debounceTimer = null;
+
+				if (_fileWatcher != null)
+				{
+					_fileWatcher.Changed -= OnConfigFileChanged;
+					_fileWatcher.Created -= OnConfigFileChanged;
+					_fileWatcher.Renamed -= OnConfigFileChanged;
+					_fileWatcher.Dispose();
+					_fileWatcher = null;
+				}
+			}
+		}
+
 		internal static void LoadLevelRecipeBlocksFromDisk()
 		{
-			RecipeMinLevelByGuid.Clear();
-			LevelRecipeBlocksEnabled = true;
-			LevelRecipeBlockedMessage = "You cannot craft this yet. Required gear level: {level}.";
-
 			try
 			{
 				EnsureConfigsExist();
@@ -78,27 +134,51 @@ namespace LevelRecipeGate.Config
 					return;
 				}
 
-				LevelRecipeBlocksEnabled = cfg.enabled;
-				if (!string.IsNullOrWhiteSpace(cfg.message))
-					LevelRecipeBlockedMessage = cfg.message;
+				var loadedRecipes = new Dictionary<int, int>();
+				bool enabled = cfg.enabled;
+				string message = string.IsNullOrWhiteSpace(cfg.message)
+					? "You cannot craft this yet. Required gear level: {level}."
+					: cfg.message;
+				bool needsRewrite = false;
 
-				if (cfg.recipe_level_blocks == null)
-					return;
-
-				foreach (var block in cfg.recipe_level_blocks)
+				if (cfg.recipe_level_blocks != null)
 				{
-					if (block == null || block.recipes == null)
-						continue;
-
-					foreach (int guid in block.recipes)
+					foreach (var block in cfg.recipe_level_blocks)
 					{
-						// If the same recipe appears twice, keep the highest level requirement.
-						if (!RecipeMinLevelByGuid.TryGetValue(guid, out int existing) || block.min_level > existing)
-							RecipeMinLevelByGuid[guid] = block.min_level;
+						if (block == null || block.recipes == null)
+							continue;
+
+						foreach (object recipe in block.recipes)
+						{
+							if (!TryReadRecipeGuid(recipe, out int guid, out bool shouldRewriteRecipe))
+							{
+								Plugin.Logger.LogWarning($"[{Plugin.Name}] Ignoring unknown recipe prefab '{recipe}' in {LevelRecipeCfgFile}.");
+								continue;
+							}
+
+							needsRewrite |= shouldRewriteRecipe;
+
+							// If the same recipe appears twice, keep the highest level requirement.
+							if (!loadedRecipes.TryGetValue(guid, out int existing) || block.min_level > existing)
+								loadedRecipes[guid] = block.min_level;
+						}
 					}
 				}
 
-				Plugin.Logger.LogInfo($"[{Plugin.Name}] Loaded {RecipeMinLevelByGuid.Count} level-gated recipe GUID(s). Enabled={LevelRecipeBlocksEnabled}.");
+				lock (SyncRoot)
+				{
+					RecipeMinLevelByGuid.Clear();
+					foreach (var kvp in loadedRecipes)
+						RecipeMinLevelByGuid[kvp.Key] = kvp.Value;
+
+					LevelRecipeBlocksEnabled = enabled;
+					LevelRecipeBlockedMessage = message;
+				}
+
+				Plugin.Logger.LogInfo($"[{Plugin.Name}] Loaded {loadedRecipes.Count} level-gated recipe GUID(s). Enabled={enabled}.");
+
+				if (needsRewrite)
+					SaveLevelRecipeBlocksToDisk();
 			}
 			catch (Exception ex)
 			{
@@ -112,20 +192,33 @@ namespace LevelRecipeGate.Config
 			{
 				Directory.CreateDirectory(ConfigDir);
 
-				var grouped = RecipeMinLevelByGuid
+				Dictionary<int, int> snapshot = GetRecipeLevelGatesSnapshot();
+				bool enabled;
+				string message;
+
+				lock (SyncRoot)
+				{
+					enabled = LevelRecipeBlocksEnabled;
+					message = LevelRecipeBlockedMessage;
+				}
+
+				var grouped = snapshot
 					.GroupBy(kvp => kvp.Value)
 					.OrderBy(g => g.Key)
 					.Select(g => new LevelRecipeBlockEntry
 					{
 						min_level = g.Key,
-						recipes = g.Select(kvp => kvp.Key).OrderBy(x => x).ToList()
+						recipes = g
+							.Select(kvp => RecipePrefabLookup.ToConfigValue(kvp.Key))
+							.OrderBy(value => value.ToString())
+							.ToList()
 					})
 					.ToList();
 
 				var cfg = new LevelRecipeConfigFile
 				{
-					enabled = LevelRecipeBlocksEnabled,
-					message = LevelRecipeBlockedMessage,
+					enabled = enabled,
+					message = message,
 					recipe_level_blocks = grouped
 				};
 
@@ -139,22 +232,124 @@ namespace LevelRecipeGate.Config
 
 		internal static bool TryGetRequiredLevel(int recipeGuid, out int requiredLevel)
 		{
-			requiredLevel = 0;
-			return LevelRecipeBlocksEnabled && RecipeMinLevelByGuid.TryGetValue(recipeGuid, out requiredLevel);
+			lock (SyncRoot)
+			{
+				requiredLevel = 0;
+				return LevelRecipeBlocksEnabled && RecipeMinLevelByGuid.TryGetValue(recipeGuid, out requiredLevel);
+			}
+		}
+
+		internal static Dictionary<int, int> GetRecipeLevelGatesSnapshot()
+		{
+			lock (SyncRoot)
+			{
+				return new Dictionary<int, int>(RecipeMinLevelByGuid);
+			}
+		}
+
+		internal static bool TryResolveRecipePrefab(string value, out int recipeGuid)
+		{
+			return RecipePrefabLookup.TryResolve(value, out recipeGuid);
+		}
+
+		internal static string FormatRecipePrefab(int recipeGuid)
+		{
+			return RecipePrefabLookup.Format(recipeGuid);
 		}
 
 		internal static void SetRecipeLevelGate(int recipeGuid, int minLevel)
 		{
-			RecipeMinLevelByGuid[recipeGuid] = minLevel;
+			lock (SyncRoot)
+			{
+				RecipeMinLevelByGuid[recipeGuid] = minLevel;
+			}
+
 			SaveLevelRecipeBlocksToDisk();
 		}
 
 		internal static bool RemoveRecipeLevelGate(int recipeGuid)
 		{
-			bool removed = RecipeMinLevelByGuid.Remove(recipeGuid);
+			bool removed;
+			lock (SyncRoot)
+			{
+				removed = RecipeMinLevelByGuid.Remove(recipeGuid);
+			}
+
 			if (removed)
 				SaveLevelRecipeBlocksToDisk();
 			return removed;
+		}
+
+		private static void OnConfigFileChanged(object sender, FileSystemEventArgs e)
+		{
+			lock (SyncRoot)
+			{
+				if (_disposed)
+					return;
+
+				_debounceTimer?.Dispose();
+				_debounceTimer = new Timer(_ => ReloadFromWatcher(), null, TimeSpan.FromMilliseconds(ReloadDebounceMilliseconds), Timeout.InfiniteTimeSpan);
+			}
+		}
+
+		private static void ReloadFromWatcher()
+		{
+			if (_disposed || !File.Exists(LevelRecipeCfgFile))
+				return;
+
+			Plugin.Logger.LogInfo($"[{Plugin.Name}] Detected config change, reloading {Path.GetFileName(LevelRecipeCfgFile)}.");
+			LoadLevelRecipeBlocksFromDisk();
+		}
+
+		private static bool TryReadRecipeGuid(object value, out int recipeGuid, out bool shouldRewrite)
+		{
+			recipeGuid = 0;
+			shouldRewrite = false;
+
+			if (value is JsonElement element)
+			{
+				if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out recipeGuid))
+				{
+					shouldRewrite = RecipePrefabLookup.HasName(recipeGuid);
+					return true;
+				}
+
+				if (element.ValueKind == JsonValueKind.String)
+					return TryReadRecipeGuidString(element.GetString(), out recipeGuid, out shouldRewrite);
+
+				return false;
+			}
+
+			if (value is int intValue)
+			{
+				recipeGuid = intValue;
+				shouldRewrite = RecipePrefabLookup.HasName(recipeGuid);
+				return true;
+			}
+
+			if (value is long longValue && longValue >= int.MinValue && longValue <= int.MaxValue)
+			{
+				recipeGuid = (int)longValue;
+				shouldRewrite = RecipePrefabLookup.HasName(recipeGuid);
+				return true;
+			}
+
+			if (value is string stringValue)
+				return TryReadRecipeGuidString(stringValue, out recipeGuid, out shouldRewrite);
+
+			return value != null && TryReadRecipeGuidString(value.ToString(), out recipeGuid, out shouldRewrite);
+		}
+
+		private static bool TryReadRecipeGuidString(string value, out int recipeGuid, out bool shouldRewrite)
+		{
+			recipeGuid = 0;
+			shouldRewrite = false;
+
+			if (!RecipePrefabLookup.TryResolve(value, out recipeGuid))
+				return false;
+
+			shouldRewrite = int.TryParse(value, out _) && RecipePrefabLookup.HasName(recipeGuid);
+			return true;
 		}
 	}
 }

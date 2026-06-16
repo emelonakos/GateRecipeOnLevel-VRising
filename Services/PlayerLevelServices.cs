@@ -50,9 +50,11 @@ namespace LevelRecipeGate.Services
 			File.WriteAllText(FilePath, JsonSerializer.Serialize(Records, new JsonSerializerOptions { WriteIndented = true }));
 		}
 
-		internal static int UpdateAndGetHighestGearLevel(EntityManager em, User user)
+		internal static int UpdateAndGetHighestGearLevel(EntityManager em, User user, Entity characterEntity)
 		{
-			int current = GetCurrentGearScore(em, user);
+			int current = GetCurrentGearScore(em, characterEntity);
+			if (current < 0)
+				return GetRecordedHighestGearLevel(user);
 
 			ulong steamId = user.PlatformId;
 			string name = user.CharacterName.ToString();
@@ -83,17 +85,22 @@ namespace LevelRecipeGate.Services
 			return record.highest_gear_level;
 		}
 
-		private static int GetCurrentGearScore(EntityManager em, User user)
+		private static int GetRecordedHighestGearLevel(User user)
+		{
+			return Records.TryGetValue(user.PlatformId, out PlayerLevelRecord record)
+				? record.highest_gear_level
+				: -1;
+		}
+
+		private static int GetCurrentGearScore(EntityManager em, Entity characterEntity)
 		{
 			try
 			{
-				Entity characterEntity = user.LocalCharacter._Entity;
-
 				if (characterEntity == Entity.Null || !em.Exists(characterEntity))
-					return 0;
+					return -1;
 
 				if (!em.HasComponent<Equipment>(characterEntity))
-					return 0;
+					return -1;
 
 				Equipment equipment = em.GetComponentData<Equipment>(characterEntity);
 
@@ -102,7 +109,7 @@ namespace LevelRecipeGate.Services
 			}
 			catch
 			{
-				return 0;
+				return -1;
 			}
 		}
 	}

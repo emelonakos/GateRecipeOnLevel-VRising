@@ -35,11 +35,11 @@ namespace LevelRecipeGate.Services
 			if (!ConfigStore.TryGetRequiredLevel(recipeGuid.GuidHash, out int requiredLevel))
 				return;
             
-			int playerGearLevel = TryGetPlayerGearLevel(eventEntity, out User user, out Entity userEntity, out Entity characterEntity, out FromCharacter fromCharacter);
+			int playerHighestGearLevel = TryGetPlayerHighestGearLevel(eventEntity, out User user, out Entity userEntity, out Entity characterEntity, out FromCharacter fromCharacter);
 
-			Plugin.Logger.LogInfo($"[{Plugin.Name}] {action} check gate={recipeGuid.GuidHash}, playerGearLevel={playerGearLevel}, requiredLevel={requiredLevel}, {context}");
+			Plugin.Logger.LogInfo($"[{Plugin.Name}] {action} check gate={recipeGuid.GuidHash}, playerHighestGearLevel={playerHighestGearLevel}, requiredLevel={requiredLevel}, {context}");
 
-			if (playerGearLevel < 0)
+			if (playerHighestGearLevel < 0)
 			{
 				eventEntity.Destroy();
 				if (forgeEntity.Exists())
@@ -51,9 +51,9 @@ namespace LevelRecipeGate.Services
 				return;
 			}
 
-			if (playerGearLevel >= requiredLevel)
+			if (playerHighestGearLevel >= requiredLevel)
 			{
-				Plugin.Logger.LogInfo($"[{Plugin.Name}] ALLOWED {action} gate={recipeGuid.GuidHash}, playerGearLevel={playerGearLevel}, requiredLevel={requiredLevel}");
+				Plugin.Logger.LogInfo($"[{Plugin.Name}] ALLOWED {action} gate={recipeGuid.GuidHash}, playerHighestGearLevel={playerHighestGearLevel}, requiredLevel={requiredLevel}");
 				return;
 			}
 
@@ -65,15 +65,15 @@ namespace LevelRecipeGate.Services
 
 			string message = ConfigStore.LevelRecipeBlockedMessage
 				.Replace("{level}", requiredLevel.ToString())
-				.Replace("{current}", playerGearLevel.ToString())
+				.Replace("{current}", playerHighestGearLevel.ToString())
 				.Replace("{recipe}", recipeGuid.GuidHash.ToString());
 
 			TrySendSystemMessage(user, message);
 
-			Plugin.Logger.LogInfo($"[{Plugin.Name}] BLOCKED {action} gate={recipeGuid.GuidHash}, playerGearLevel={playerGearLevel}, requiredLevel={requiredLevel}");
+			Plugin.Logger.LogInfo($"[{Plugin.Name}] BLOCKED {action} gate={recipeGuid.GuidHash}, playerHighestGearLevel={playerHighestGearLevel}, requiredLevel={requiredLevel}");
 		}
 
-		private static int TryGetPlayerGearLevel(Entity eventEntity, out User user, out Entity userEntity, out Entity characterEntity, out FromCharacter fromCharacter)
+		private static int TryGetPlayerHighestGearLevel(Entity eventEntity, out User user, out Entity userEntity, out Entity characterEntity, out FromCharacter fromCharacter)
 		{
 			user = default(User);
 			userEntity = Entity.Null;
@@ -93,7 +93,7 @@ namespace LevelRecipeGate.Services
 					return -1;
 
 				user = userEntity.Read<User>();
-				int highestLevel = PlayerLevelService.UpdateAndGetHighestGearLevel(EcsContext.EntityManager, user);
+				int highestLevel = PlayerLevelService.UpdateAndGetHighestGearLevel(EcsContext.EntityManager, user, characterEntity);
 
 				Plugin.Logger.LogInfo($"[{Plugin.Name}] Highest recorded gear level for {user.CharacterName} = {highestLevel}");
 
